@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<!--
+Copyright 2016 Mozilla Foundation
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+-->
+<html dir="ltr">
+
+	<head>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+		<title>借款合同</title>
+		<style>
+			* {
+				padding: 0;
+				margin: 0;
+			}
+			
+			section {
+				position: absolute;
+				top: 0;
+				left: 0;
+				width: 100%;
+				height: 100%;
+				overflow: hidden;
+				font-size: 2rem;
+			}
+			
+			.hidden {
+				display: none;
+			}
+			
+			[hidden] {
+				display: none !important;
+			}
+			
+			#viewerContainer {
+				position: absolute;
+				overflow: auto;
+				width: 100%;
+				top: 0;
+				bottom: 0;
+				left: 0;
+				right: 0;
+			}
+			
+			canvas {
+				margin: auto;
+				display: block;
+			}
+			
+			.pdfViewer .page {
+				position: relative;
+				overflow: visible;
+				background-color: white;
+				margin: 0 auto;
+			}
+			
+			.pdfViewer .page .loadingIcon {
+				width: 29px;
+				height: 29px;
+				background: url("images/spinner.png") no-repeat left top / 380px;
+				border: medium none;
+				animation: 1s steps(10, end) 0s normal none infinite moveDefault;
+				display: block;
+				position: absolute;
+				top: calc((100% - 29px) / 2);
+				left: calc((100% - 29px) / 2);
+			}
+			
+			@keyframes moveDefault {
+				from {
+					background-position: 0 top;
+				}
+				to {
+					background-position: -390px top;
+				}
+			}
+			
+			#loadingBar {
+				position: relative;
+				height: 3px;
+				background-color: #fff;
+				border-bottom: 1px solid #fff;
+			}
+			
+			#loadingBar .progress {
+				position: absolute;
+				left: 0;
+				width: 0;
+				height: 100%;
+				background-color: #fff;
+				overflow: hidden;
+				transition: width 200ms;
+			}
+			
+			@keyframes progressIndeterminate {
+				0% {
+					left: 0;
+				}
+				50% {
+					left: 100%;
+				}
+				100% {
+					left: 100%;
+				}
+			}
+			
+			#loadingBar .progress.indeterminate {
+				background-color: #FA7138;
+				transition: none;
+			}
+			
+			#loadingBar .indeterminate .glimmer {
+				position: absolute;
+				top: 0;
+				left: 0;
+				height: 100%;
+				width: 5rem;
+				background-image: linear-gradient(to right, #999 0%, #fff 50%, #999 100%);
+				background-size: 100% 100%;
+				background-repeat: no-repeat;
+				animation: progressIndeterminate 2s linear infinite;
+			}
+		</style>
+
+	</head>
+
+	<body>
+
+		<div id="viewerContainer">
+			<div id="viewer" class="pdfViewer"></div>
+		</div>
+
+		<div id="loadingBar" style="display: none;">
+			<div class="progress"></div>
+			<div class="glimmer"></div>
+		</div>
+		<script src="pdf.min.js"></script>
+		<script src="pdf_viewer.js"></script>
+		<script>
+			/* Copyright 2016 Mozilla Foundation
+			 *
+			 * Licensed under the Apache License, Version 2.0 (the "License");
+			 * you may not use this file except in compliance with the License.
+			 * You may obtain a copy of the License at
+			 *
+			 *     http://www.apache.org/licenses/LICENSE-2.0
+			 *
+			 * Unless required by applicable law or agreed to in writing, software
+			 * distributed under the License is distributed on an "AS IS" BASIS,
+			 * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+			 * See the License for the specific language governing permissions and
+			 * limitations under the License.
+			 */
+			/* globals pdfjsLib, pdfjsViewer */
+
+			'use strict';
+
+			if(!pdfjsLib.getDocument || !pdfjsViewer.PDFViewer) {
+				alert('Please build the pdfjs-dist library using\n `gulp dist-install`');
+			}
+
+			var USE_ONLY_CSS_ZOOM = true;
+			var TEXT_LAYER_MODE = 0; // DISABLE
+			var MAX_IMAGE_SIZE = 1024 * 1024;
+			var CMAP_URL = '../../node_modules/pdfjs-dist/cmaps/';
+			var CMAP_PACKED = true;
+
+			pdfjsLib.GlobalWorkerOptions.workerSrc =
+				'pdf.worker.min.js';
+
+			var DEFAULT_URL = 'Contract-final.pdf';
+			var DEFAULT_SCALE_DELTA = 1.0;
+			var MIN_SCALE = 0.25;
+			var MAX_SCALE = 10.0;
+			var DEFAULT_SCALE_VALUE = 'auto';
+
+			var PDFViewerApplication = {
+				pdfLoadingTask: null,
+				pdfDocument: null,
+				pdfViewer: null,
+				pdfHistory: null,
+				pdfLinkService: null,
+
+				/**
+				 * Opens PDF document specified by URL.
+				 * @returns {Promise} - Returns the promise, which is resolved when document
+				 *                      is opened.
+				 */
+				open: function(params) {
+					if(this.pdfLoadingTask) {
+						// We need to destroy already opened document
+						return this.close().then(function() {
+							// ... and repeat the open() call.
+							return this.open(params);
+						}.bind(this));
+					}
+
+					var url = params.url;
+					var self = this;
+
+					// Loading document.
+					var loadingTask = pdfjsLib.getDocument({
+						url: url,
+						maxImageSize: MAX_IMAGE_SIZE,
+						cMapUrl: CMAP_URL,
+						cMapPacked: CMAP_PACKED,
+					});
+					this.pdfLoadingTask = loadingTask;
+
+					loadingTask.onProgress = function(progressData) {
+						self.progress(progressData.loaded / progressData.total);
+					};
+
+					return loadingTask.promise.then(function(pdfDocument) {
+						// Document loaded, specifying document for the viewer.
+						self.pdfDocument = pdfDocument;
+						self.pdfViewer.setDocument(pdfDocument);
+						self.pdfLinkService.setDocument(pdfDocument);
+						self.pdfHistory.initialize(pdfDocument.fingerprint);
+
+						self.loadingBar.hide();
+					}, function(exception) {
+						var message = exception && exception.message;
+						var l10n = self.l10n;
+						var loadingErrorMessage;
+
+						if(exception instanceof pdfjsLib.InvalidPDFException) {
+							// change error message also for other builds
+							loadingErrorMessage = l10n.get('invalid_file_error', null,
+								'Invalid or corrupted PDF file.');
+						} else if(exception instanceof pdfjsLib.MissingPDFException) {
+							// special message for missing PDFs
+							loadingErrorMessage = l10n.get('missing_file_error', null,
+								'Missing PDF file.');
+						} else if(exception instanceof pdfjsLib.UnexpectedResponseException) {
+							loadingErrorMessage = l10n.get('unexpected_response_error', null,
+								'Unexpected server response.');
+						} else {
+							loadingErrorMessage = l10n.get('loading_error', null,
+								'An error occurred while loading the PDF.');
+						}
+
+						loadingErrorMessage.then(function(msg) {
+							self.error(msg, {
+								message: message
+							});
+						});
+						self.loadingBar.hide();
+					});
+				},
+
+				/**
+				 * Closes opened PDF document.
+				 * @returns {Promise} - Returns the promise, which is resolved when all
+				 *                      destruction is completed.
+				 */
+				close: function() {
+					var errorWrapper = document.getElementById('errorWrapper');
+					errorWrapper.setAttribute('hidden', 'true');
+
+					if(!this.pdfLoadingTask) {
+						return Promise.resolve();
+					}
+
+					var promise = this.pdfLoadingTask.destroy();
+					this.pdfLoadingTask = null;
+
+					if(this.pdfDocument) {
+						this.pdfDocument = null;
+
+						this.pdfViewer.setDocument(null);
+						this.pdfLinkService.setDocument(null, null);
+					}
+
+					return promise;
+				},
+
+				get loadingBar() {
+					var bar = new pdfjsViewer.ProgressBar('#loadingBar', {});
+
+					return pdfjsLib.shadow(this, 'loadingBar', bar);
+				},
+
+				error: function pdfViewError(message, moreInfo) {
+					console.log(message);
+				},
+
+				progress: function pdfViewProgress(level) {
+					var percent = Math.round(level * 100);
+					// Updating the bar if value increases.
+					if(percent > this.loadingBar.percent || isNaN(percent)) {
+						this.loadingBar.percent = percent;
+					}
+				},
+
+				initUI: function pdfViewInitUI() {
+					var linkService = new pdfjsViewer.PDFLinkService();
+					this.pdfLinkService = linkService;
+
+					this.l10n = pdfjsViewer.NullL10n;
+
+					var container = document.getElementById('viewerContainer');
+					var pdfViewer = new pdfjsViewer.PDFViewer({
+						container: container,
+						linkService: linkService,
+						l10n: this.l10n,
+						useOnlyCssZoom: USE_ONLY_CSS_ZOOM,
+						textLayerMode: TEXT_LAYER_MODE,
+					});
+					this.pdfViewer = pdfViewer;
+					linkService.setViewer(pdfViewer);
+
+					this.pdfHistory = new pdfjsViewer.PDFHistory({
+						linkService: linkService
+					});
+					linkService.setHistory(this.pdfHistory);
+
+					container.addEventListener('pagesinit', function() {
+						// We can use pdfViewer now, e.g. let's change default scale.
+						pdfViewer.currentScaleValue = DEFAULT_SCALE_VALUE;
+					});
+
+				}
+			};
+
+			document.addEventListener('DOMContentLoaded', function() {
+				PDFViewerApplication.initUI();
+			}, true);
+
+			(function animationStartedClosure() {
+				// The offsetParent is not set until the PDF.js iframe or object is visible.
+				// Waiting for first animation.
+				PDFViewerApplication.animationStartedPromise = new Promise(
+					function(resolve) {
+						window.requestAnimationFrame(resolve);
+					});
+			})();
+
+			var getParameter = function(name, findStr) {
+				// var reg = new RegExp("(^|&)" + name + "=([^&]*)(&|$)");
+                var reg = /(\w+):\/\/([^\:|\/]+)(\:\d*)?(.*\/)([^#|\?|\n]+)?(#.*)?(\?.*)?/i;
+
+				if(findStr) {
+					findStr = findStr.indexOf("?") != -1 ? findStr.substr(findStr.indexOf("?") + 1) : findStr;
+				}
+
+				// var searchStr = findStr || window.location.search.substr(1);
+                var searchStr = findStr || window.location.search.substr(1);
+
+				var r = searchStr.match(reg);
+				if(r != null) return decodeURIComponent(r[2]);
+				return "";
+			};
+
+			var file = getParameter("file");
+			if(file) {
+				DEFAULT_URL = file;
+				// We need to delay opening until all HTML is loaded.
+				PDFViewerApplication.animationStartedPromise.then(function() {
+					PDFViewerApplication.open({
+						url: DEFAULT_URL
+					});
+				});
+			} else {
+				console.log("error file parameter");
+			}
+		</script>
+	</body>
+
+</html>
